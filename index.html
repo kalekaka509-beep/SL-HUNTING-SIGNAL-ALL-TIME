@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="google-site-verification" content="A3uHM1Cq0rDODBjmxo5d5V2zWFr7O8j3kzP2vW0iX1I" />
+<title>SL Hunter FAST</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #000; color: #0f0; font-family: monospace; padding: 10px; }
+.container { max-width: 700px; margin: auto; }
+h1 { margin-bottom: 10px; }
+h2 { font-size: 14px; margin: 14px 0 4px; color: #6f6; }
+input, select, button, textarea { width: 100%; padding: 12px; margin: 5px 0; font-size: 16px; background: #111; color: #0f0; border: 1px solid #0f0; font-family: monospace; }
+textarea { resize: vertical; }
+button { background: #0f0; color: #000; font-weight: bold; cursor: pointer; }
+button:active { transform: scale(0.98); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+.row { display: flex; gap: 8px; }
+.row > * { flex: 1; }
+.signal { padding: 14px; margin: 8px 0; border: 2px solid; font-size: 15px; }
+.sell { border-color: red; background: #200; }
+.buy { border-color: #0f0; background: #020; }
+.wait { border-color: yellow; background: #220; opacity: 0.75; }
+.err { border-color: #888; background: #111; color: #ccc; }
+.copy { float: right; cursor: pointer; text-decoration: underline; }
+.meta { color: #6f6; font-size: 12px; margin-top: 4px; }
+.progress { color: #6f6; font-size: 13px; margin: 6px 0; min-height: 18px; }
+.small { font-size: 12px; color: #6f6; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>⚡ SL HUNTER FAST</h1>
+<div class="small">Live prices via Twelve Data. Get a free key at twelvedata.com — key stays in this tab only, never saved.</div>
+<h2>API KEY</h2>
+<input id="apiKey" type="text" placeholder="Twelve Data API key">
+<h2>PAIRS (comma separated, Twelve Data symbols)</h2>
+<textarea id="pairs" rows="2">EUR/USD, GBP/USD, USD/JPY, USD/CHF, XAU/USD</textarea>
+<div class="small">XAU/USD kehi Twelve Data free-tier account ma nachalna sakcha — "ERROR" dekhiyo bhane symbol hataunu ya plan check garnu parcha.</div>
+<h2>TIMEFRAME (used for "SCAN ALL PAIRS")</h2>
+<select id="timeframe">
+<option value="1min">1 min</option>
+<option value="5min">5 min</option>
+<option value="15min">15 min</option>
+<option value="30min">30 min</option>
+<option value="45min">45 min</option>
+<option value="1h" selected>1 hour</option>
+<option value="2h">2 hour</option>
+<option value="4h">4 hour</option>
+<option value="1day">1 day</option>
+<option value="1week">1 week</option>
+</select>
+<h2>PAIR (used for "SCAN ALL TIMEFRAMES")</h2>
+<select id="singlePair"></select>
+<h2>SWING LOOKBACK (candles used for HIGH/LOW)</h2>
+<input id="lookback" type="number" value="50" min="10" max="100">
+<div class="row">
+<button id="scanPairsBtn" onclick="scanAllPairs()">SCAN ALL PAIRS</button>
+<button id="scanTfBtn" onclick="scanAllTimeframes()">SCAN ALL TIMEFRAMES</button>
+</div>
+<div class="progress" id="progress"></div>
+<div id="out"></div>
+</div>
+<audio id="beep" src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7blmGgU7k9n1unEiBC13yO/eizEIHWq+8+OWT" preload="auto"></audio>
+<script>
+const ALL_TIMEFRAMES = ["1min","5min","15min","30min","45min","1h","2h","4h","1day","1week"];
+function getPairs(){ return document.getElementById('pairs').value.split(',').map(s => s.trim()).filter(Boolean); }
+function populateSinglePairSelect(){ const sel = document.getElementById('singlePair'); const pairs = getPairs(); sel.innerHTML = pairs.map(p => `<option value="${p}">${p}</option>`).join(''); }
+document.getElementById('pairs').addEventListener('input', populateSinglePairSelect); populateSinglePairSelect();
+function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+async function fetchCandles(symbol, interval, lookback, apiKey){
+const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=${interval}&outputsize=${lookback}&apikey=${encodeURIComponent(apiKey)}`;
+const res = await fetch(url); const data = await res.json();
+if(data.status === "error" ||!data.values){ throw new Error(data.message || "No data returned"); }
+return data.values;
+}
+function analyze(symbol, interval, values){
+const price = +values[0].close; const highs = values.map(v => +v.high); const lows = values.map(v => +v.low);
+const h = Math.max(...highs); const l = Math.min(...lows); const range = h - l;
+const zone = range * 0.15; const entryOff = range * 0.05; const slOff = range * 0.10; const tpOff = range * 0.15;
+let type, e, sl, tp, reason;
+if(range <= 0){ return { symbol, interval, price, h, l, type: 'wait', note: 'Flat range, no data yet' }; }
+if(price >= h - zone){ type = 'sell'; e = h - entryOff; sl = h + slOff; tp = l + tpOff; reason = 'EQH LIQUIDITY HUNT'; }
+else if(price <= l + zone){ type = 'buy'; e = l + entryOff; sl = l - slOff; tp = h - tpOff; reason = 'EQL LIQUIDITY HUNT'; }
+else { type = 'wait'; }
+return { symbol, interval, price, h, l, type, e, sl, tp, reason };
+}
+function renderResult(r){
+if(r.error){ return `<div class="signal err"><b>${r.symbol} (${r.interval})</b><br>ERROR: ${r.error}</div>`; }
+if(r.type === 'wait'){ return `<div class="signal wait"> <b>${r.symbol} (${r.interval}) — WAIT</b><br> PRICE: ${r.price} | RANGE: ${r.l} – ${r.h} ${r.note? `<div class="meta">${r.note}</div>` : ''} </div>`; }
+const cls = r.type === 'sell'? 'sell' : 'buy'; const label = r.type === 'sell'? 'SELL HUNT DETECTED!!!' : 'BUY HUNT DETECTED!!!';
+return `<div class="signal ${cls}"> <b>${r.symbol} (${r.interval}) — ${label}</b> <span class="copy" onclick="copyTxt('${r.e.toFixed(5)},${r.sl.toFixed(5)},${r.tp.toFixed(5)}')">COPY</span><br> ENTRY: ${r.e.toFixed(5)} | SL: ${r.sl.toFixed(5)} | TP: ${r.tp.toFixed(5)}<br> REASON: ${r.reason} <div class="meta">PRICE: ${r.price} | RANGE: ${r.l} – ${r.h}</div> </div>`;
+}
+function copyTxt(txt){ navigator.clipboard.writeText(txt); alert("COPIED: " + txt); }
+function setButtonsDisabled(disabled){ document.getElementById('scanPairsBtn').disabled = disabled; document.getElementById('scanTfBtn').disabled = disabled; }
+async function runScan(jobs){
+const apiKey = document.getElementById('apiKey').value.trim(); const lookback = +document.getElementById('lookback').value || 50;
+const progress = document.getElementById('progress'); const out = document.getElementById('out');
+if(!apiKey){ alert("Enter your Twelve Data API key first."); return; }
+setButtonsDisabled(true); out.innerHTML = ""; let results = []; let hitFound = false;
+for(let i = 0; i < jobs.length; i++){
+const { symbol, interval } = jobs[i]; progress.textContent = `Scanning ${i+1}/${jobs.length}: ${symbol} (${interval})...`;
+try{ const values = await fetchCandles(symbol, interval, lookback, apiKey); const r = analyze(symbol, interval, values); results.push(r); if(r.type === 'sell' || r.type === 'buy') hitFound = true; }
+catch(err){ results.push({ symbol, interval, error: err.message }); }
+out.innerHTML = results.slice().sort((a,b) => (a.error?2:a.type==='wait'?1:0) - (b.error?2:b.type==='wait'?1:0)).map(renderResult).join('');
+if(i < jobs.length - 1) await sleep(8000);
+}
+progress.textContent = `Done. ${jobs.length} checked.`; if(hitFound) document.getElementById('beep').play(); setButtonsDisabled(false);
+}
+function scanAllPairs(){ const pairs = getPairs(); const interval = document.getElementById('timeframe').value; runScan(pairs.map(symbol => ({ symbol, interval }))); }
+function scanAllTimeframes(){ const symbol = document.getElementById('singlePair').value; if(!symbol){ alert("No pair selected."); return; } runScan(ALL_TIMEFRAMES.map(interval => ({ symbol, interval }))); }
+</script>
+</body>
+</html>
